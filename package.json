@@ -1,0 +1,17 @@
+{
+  "name": "ratelimit-convert",
+  "version": "0.1.0",
+  "description": "Convert rate limit rules between nginx directives and a canonical JSON policy format",
+  "type": "commonjs",
+  "main": "dist/cli.js",
+  "bin": {
+    "ratelimit-convert": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
