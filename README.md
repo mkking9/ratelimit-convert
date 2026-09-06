@@ -8,11 +8,19 @@ nginx's directive syntax and a plain JSON rule format, in either direction.
 
 ## Formats
 
-**nginx** — the two directives nginx actually uses:
+**nginx** — the directives nginx actually uses. Rate limits:
 
 ```nginx
 limit_req_zone $binary_remote_addr zone=api_general:10m rate=10r/s;
 limit_req zone=api_general burst=20 nodelay;
+```
+
+Connection limits (`limit_conn`'s second directive is positional — a bare
+zone name and a number, not `zone=`):
+
+```nginx
+limit_conn_zone $binary_remote_addr zone=addr:10m;
+limit_conn addr 10;
 ```
 
 **json** — one object per zone, everything nginx splits across two
@@ -30,12 +38,21 @@ directives collapsed into one rule:
       "burst": 20,
       "nodelay": true
     }
+  ],
+  "connLimits": [
+    {
+      "name": "addr",
+      "key": "$binary_remote_addr",
+      "zoneSize": "10m",
+      "conn": 10
+    }
   ]
 }
 ```
 
 `ratePeriod` is `"s"` or `"m"`, matching nginx's `r/s` and `r/m`. `burst`,
-`nodelay`, and `delay` are optional, same as in nginx.
+`nodelay`, and `delay` are optional, same as in nginx. `connLimits` is
+omitted entirely when there are none.
 
 ## Usage
 
@@ -83,6 +100,7 @@ $ ratelimit-convert limits.conf --json
   "from": "nginx",
   "to": "json",
   "ruleCount": 1,
+  "connLimitCount": 0,
   "warnings": [],
   "wroteTo": null,
   "output": "{\n  \"rules\": [...]\n}\n"
@@ -108,6 +126,6 @@ node dist/cli.js limits.conf --json
 
 ## Status
 
-Early. Only the two directives above are handled — no `limit_conn`, no
-`$geo`-based keys, no multi-zone `limit_req` lines. See the issues for
-what's next.
+Early. `limit_req`/`limit_req_zone` and `limit_conn`/`limit_conn_zone` are
+handled, but not `$geo`-based keys or multiple `limit_req` lines against the
+same zone. See the issues for what's next.

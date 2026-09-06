@@ -1,11 +1,14 @@
-import { ConversionResult, RateLimitRule, RatePeriod } from './types';
+import { ConnLimitRule, ConversionResult, RateLimitRule, RatePeriod } from './types';
 
 // nginx groups a limit into two directives: limit_req_zone (defines the
 // bucket) and limit_req (applies it, with burst/nodelay/delay). We fold
-// both back into a single RateLimitRule keyed by zone name.
+// both back into a single RateLimitRule keyed by zone name. limit_conn
+// works the same way, but limit_conn's second directive is positional
+// (`limit_conn zone number;`) rather than zone=name.
 export function parseNginx(text: string): ConversionResult {
   const warnings: string[] = [];
   const zones = new Map<string, RateLimitRule>();
+  const connZones = new Map<string, ConnLimitRule>();
   const lines = text.split('\n');
 
   for (let i = 0; i < lines.length; i++) {
@@ -58,18 +61,48 @@ export function parseNginx(text: string): ConversionResult {
         else if (tok.startsWith('delay=')) rule.delay = Number(tok.slice('delay='.length));
         else warnings.push(`line ${i + 1}: unrecognized limit_req option "${tok}"`);
       }
+    } else if (directive === 'limit_conn_zone') {
+      const key = tokens[1];
+      const zoneToken = tokens.find((t) => t.startsWith('zone='));
+      if (!key || !zoneToken) {
+        warnings.push(`line ${i + 1}: malformed limit_conn_zone, skipped`);
+        continue;
+      }
+      const zoneMatch = zoneToken.match(/^zone=([^:]+):(.+)$/);
+      if (!zoneMatch) {
+        warnings.push(`line ${i + 1}: could not parse zone, skipped`);
+        continue;
+      }
+      const [, name, zoneSize] = zoneMatch;
+      connZones.set(name, { name, key, zoneSize, conn: 0 });
+    } else if (directive === 'limit_conn') {
+      const name = tokens[1];
+      const conn = Number(tokens[2]);
+      if (!name || !tokens[2] || Number.isNaN(conn)) {
+        warnings.push(`line ${i + 1}: malformed limit_conn, skipped`);
+        continue;
+      }
+      const rule = connZones.get(name);
+      if (!rule) {
+        warnings.push(`line ${i + 1}: limit_conn references unknown zone "${name}", skipped`);
+        continue;
+      }
+      rule.conn = conn;
     } else {
       warnings.push(`line ${i + 1}: unrecognized directive "${directive}", skipped`);
     }
   }
 
-  return { rules: Array.from(zones.values()), warnings };
+  return { rules: Array.from(zones.values()), connLimits: Array.from(connZones.values()), warnings };
 }
 
-export function generateNginx(rules: RateLimitRule[]): string {
+export function generateNginx(rules: RateLimitRule[], connLimits: ConnLimitRule[] = []): string {
   const lines: string[] = [];
   for (const r of rules) {
     lines.push(`limit_req_zone ${r.key} zone=${r.name}:${r.zoneSize} rate=${r.rateLimit}r/${r.ratePeriod};`);
+  }
+  for (const c of connLimits) {
+    lines.push(`limit_conn_zone ${c.key} zone=${c.name}:${c.zoneSize};`);
   }
   for (const r of rules) {
     const parts = [`limit_req zone=${r.name}`];
@@ -77,6 +110,9 @@ export function generateNginx(rules: RateLimitRule[]): string {
     if (r.nodelay) parts.push('nodelay');
     else if (r.delay !== undefined) parts.push(`delay=${r.delay}`);
     lines.push(parts.join(' ') + ';');
+  }
+  for (const c of connLimits) {
+    lines.push(`limit_conn ${c.name} ${c.conn};`);
   }
   return lines.join('\n') + '\n';
 }
@@ -131,9 +167,38 @@ export function parseCanonicalJson(text: string): ConversionResult {
     rules.push(rule);
   });
 
-  return { rules, warnings };
+  const connLimits: ConnLimitRule[] = [];
+  const rawConnLimits = (data as { connLimits?: unknown }).connLimits;
+  if (rawConnLimits !== undefined) {
+    if (!Array.isArray(rawConnLimits)) {
+      warnings.push('"connLimits" is not an array, skipped');
+    } else {
+      rawConnLimits.forEach((raw, index) => {
+        if (typeof raw !== 'object' || raw === null) {
+          warnings.push(`connLimit ${index}: not an object, skipped`);
+          return;
+        }
+        const c = raw as Record<string, unknown>;
+        const label = typeof c.name === 'string' ? c.name : `#${index}`;
+        if (
+          typeof c.name !== 'string' ||
+          typeof c.key !== 'string' ||
+          typeof c.zoneSize !== 'string' ||
+          typeof c.conn !== 'number'
+        ) {
+          warnings.push(`connLimit ${label}: missing or invalid required field, skipped`);
+          return;
+        }
+        connLimits.push({ name: c.name, key: c.key, zoneSize: c.zoneSize, conn: c.conn });
+      });
+    }
+  }
+
+  return { rules, connLimits, warnings };
 }
 
-export function generateCanonicalJson(rules: RateLimitRule[]): string {
-  return JSON.stringify({ rules }, null, 2) + '\n';
+export function generateCanonicalJson(rules: RateLimitRule[], connLimits: ConnLimitRule[] = []): string {
+  const data: Record<string, unknown> = { rules };
+  if (connLimits.length > 0) data.connLimits = connLimits;
+  return JSON.stringify(data, null, 2) + '\n';
 }

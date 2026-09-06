@@ -74,8 +74,8 @@ function main(): void {
   const to = args.to ?? (from === 'nginx' ? 'json' : 'nginx');
 
   const text = readFileSync(args.input, 'utf8');
-  const { rules, warnings } = from === 'nginx' ? parseNginx(text) : parseCanonicalJson(text);
-  const output = to === 'nginx' ? generateNginx(rules) : generateCanonicalJson(rules);
+  const { rules, connLimits, warnings } = from === 'nginx' ? parseNginx(text) : parseCanonicalJson(text);
+  const output = to === 'nginx' ? generateNginx(rules, connLimits) : generateCanonicalJson(rules, connLimits);
 
   if (args.out) {
     writeFileSync(args.out, output, 'utf8');
@@ -87,6 +87,7 @@ function main(): void {
       from,
       to,
       ruleCount: rules.length,
+      connLimitCount: connLimits.length,
       warnings,
       wroteTo: args.out ?? null,
       output: args.out ? undefined : output,
@@ -98,7 +99,8 @@ function main(): void {
   for (const warning of warnings) {
     process.stderr.write(`warning: ${warning}\n`);
   }
-  process.stderr.write(`converted ${rules.length} rule${rules.length === 1 ? '' : 's'} from ${from} to ${to}\n`);
+  const connSuffix = connLimits.length > 0 ? ` and ${connLimits.length} conn limit${connLimits.length === 1 ? '' : 's'}` : '';
+  process.stderr.write(`converted ${rules.length} rule${rules.length === 1 ? '' : 's'}${connSuffix} from ${from} to ${to}\n`);
   if (args.out) {
     process.stderr.write(`wrote ${args.out}\n`);
   } else {
