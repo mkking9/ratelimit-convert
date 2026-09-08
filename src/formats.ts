@@ -1,4 +1,4 @@
-import { ConnLimitRule, ConversionResult, RateLimitRule, RatePeriod } from './types';
+import { ConnLimitRule, ConversionResult, LimitReqApplication, RateLimitRule, RatePeriod } from './types';
 
 // nginx groups a limit into two directives: limit_req_zone (defines the
 // bucket) and limit_req (applies it, with burst/nodelay/delay). We fold
@@ -41,6 +41,7 @@ export function parseNginx(text: string): ConversionResult {
         zoneSize,
         rateLimit: Number(rateLimit),
         ratePeriod: ratePeriod as RatePeriod,
+        applications: [],
       });
     } else if (directive === 'limit_req') {
       const zoneToken = tokens.find((t) => t.startsWith('zone='));
@@ -54,13 +55,15 @@ export function parseNginx(text: string): ConversionResult {
         warnings.push(`line ${i + 1}: limit_req references unknown zone "${name}", skipped`);
         continue;
       }
+      const application: LimitReqApplication = {};
       for (const tok of tokens.slice(1)) {
         if (tok.startsWith('zone=')) continue;
-        else if (tok.startsWith('burst=')) rule.burst = Number(tok.slice('burst='.length));
-        else if (tok === 'nodelay') rule.nodelay = true;
-        else if (tok.startsWith('delay=')) rule.delay = Number(tok.slice('delay='.length));
+        else if (tok.startsWith('burst=')) application.burst = Number(tok.slice('burst='.length));
+        else if (tok === 'nodelay') application.nodelay = true;
+        else if (tok.startsWith('delay=')) application.delay = Number(tok.slice('delay='.length));
         else warnings.push(`line ${i + 1}: unrecognized limit_req option "${tok}"`);
       }
+      rule.applications.push(application);
     } else if (directive === 'limit_conn_zone') {
       const key = tokens[1];
       const zoneToken = tokens.find((t) => t.startsWith('zone='));
@@ -105,11 +108,16 @@ export function generateNginx(rules: RateLimitRule[], connLimits: ConnLimitRule[
     lines.push(`limit_conn_zone ${c.key} zone=${c.name}:${c.zoneSize};`);
   }
   for (const r of rules) {
-    const parts = [`limit_req zone=${r.name}`];
-    if (r.burst !== undefined) parts.push(`burst=${r.burst}`);
-    if (r.nodelay) parts.push('nodelay');
-    else if (r.delay !== undefined) parts.push(`delay=${r.delay}`);
-    lines.push(parts.join(' ') + ';');
+    // A zone with no recorded application still needs a bare limit_req
+    // line to actually take effect; one with several emits one line each.
+    const applications = r.applications.length > 0 ? r.applications : [{}];
+    for (const app of applications) {
+      const parts = [`limit_req zone=${r.name}`];
+      if (app.burst !== undefined) parts.push(`burst=${app.burst}`);
+      if (app.nodelay) parts.push('nodelay');
+      else if (app.delay !== undefined) parts.push(`delay=${app.delay}`);
+      lines.push(parts.join(' ') + ';');
+    }
   }
   for (const c of connLimits) {
     lines.push(`limit_conn ${c.name} ${c.conn};`);
@@ -160,10 +168,26 @@ export function parseCanonicalJson(text: string): ConversionResult {
       rateLimit: r.rateLimit,
       ratePeriod: r.ratePeriod,
       zoneSize: r.zoneSize,
+      applications: [],
     };
-    if (typeof r.burst === 'number') rule.burst = r.burst;
-    if (typeof r.nodelay === 'boolean') rule.nodelay = r.nodelay;
-    if (typeof r.delay === 'number') rule.delay = r.delay;
+    if (r.applications !== undefined) {
+      if (!Array.isArray(r.applications)) {
+        warnings.push(`rule ${label}: "applications" is not an array, skipped`);
+      } else {
+        r.applications.forEach((rawApp, appIndex) => {
+          if (typeof rawApp !== 'object' || rawApp === null) {
+            warnings.push(`rule ${label}: application ${appIndex} is not an object, skipped`);
+            return;
+          }
+          const a = rawApp as Record<string, unknown>;
+          const application: LimitReqApplication = {};
+          if (typeof a.burst === 'number') application.burst = a.burst;
+          if (typeof a.nodelay === 'boolean') application.nodelay = a.nodelay;
+          if (typeof a.delay === 'number') application.delay = a.delay;
+          rule.applications.push(application);
+        });
+      }
+    }
     rules.push(rule);
   });
 

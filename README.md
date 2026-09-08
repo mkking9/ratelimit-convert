@@ -15,6 +15,14 @@ limit_req_zone $binary_remote_addr zone=api_general:10m rate=10r/s;
 limit_req zone=api_general burst=20 nodelay;
 ```
 
+The same zone can be applied more than once — typically one `limit_req`
+line per location block that uses it, each with its own burst/nodelay/delay:
+
+```nginx
+limit_req zone=api_general burst=20 nodelay;
+limit_req zone=api_general burst=5;
+```
+
 Connection limits (`limit_conn`'s second directive is positional — a bare
 zone name and a number, not `zone=`):
 
@@ -23,8 +31,9 @@ limit_conn_zone $binary_remote_addr zone=addr:10m;
 limit_conn addr 10;
 ```
 
-**json** — one object per zone, everything nginx splits across two
-directives collapsed into one rule:
+**json** — one object per zone, everything nginx splits across the
+`limit_req_zone` directive and its `limit_req` directives collapsed into
+one rule:
 
 ```json
 {
@@ -35,8 +44,10 @@ directives collapsed into one rule:
       "rateLimit": 10,
       "ratePeriod": "s",
       "zoneSize": "10m",
-      "burst": 20,
-      "nodelay": true
+      "applications": [
+        { "burst": 20, "nodelay": true },
+        { "burst": 5 }
+      ]
     }
   ],
   "connLimits": [
@@ -50,8 +61,10 @@ directives collapsed into one rule:
 }
 ```
 
-`ratePeriod` is `"s"` or `"m"`, matching nginx's `r/s` and `r/m`. `burst`,
-`nodelay`, and `delay` are optional, same as in nginx. `connLimits` is
+`ratePeriod` is `"s"` or `"m"`, matching nginx's `r/s` and `r/m`.
+`applications` holds one entry per `limit_req` line seen for the zone —
+each with optional `burst`, `nodelay`, and `delay`, same as in nginx — and
+is `[]` when the zone was defined but never applied. `connLimits` is
 omitted entirely when there are none.
 
 ## Usage
@@ -77,8 +90,9 @@ converted 1 rule from nginx to json
       "rateLimit": 10,
       "ratePeriod": "s",
       "zoneSize": "10m",
-      "burst": 20,
-      "nodelay": true
+      "applications": [
+        { "burst": 20, "nodelay": true }
+      ]
     }
   ]
 }
@@ -127,5 +141,5 @@ node dist/cli.js limits.conf --json
 ## Status
 
 Early. `limit_req`/`limit_req_zone` and `limit_conn`/`limit_conn_zone` are
-handled, but not `$geo`-based keys or multiple `limit_req` lines against the
-same zone. See the issues for what's next.
+handled, including multiple `limit_req` lines against the same zone, but
+not `$geo`- or `map`-based keys yet. See the issues for what's next.
