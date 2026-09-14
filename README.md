@@ -70,7 +70,7 @@ omitted entirely when there are none.
 ## Usage
 
 ```
-ratelimit-convert <file> [--from nginx|json] [--to nginx|json] [--out <file>] [--json]
+ratelimit-convert <file> [--from nginx|json] [--to nginx|json] [--out <file>] [--json] [--validate-only]
 ```
 
 `--from` is guessed from the file extension (`.conf`/`.nginx` -> nginx,
@@ -126,6 +126,21 @@ Errors are reported the same way: a message on stderr by default, or
 in an nginx file (unknown directives, a `limit_req` referencing a zone that
 was never defined) don't stop the conversion — they show up in `warnings`
 and are skipped.
+
+## `--validate-only`
+
+Runs the full parse-and-convert pipeline — so it catches the same errors
+and warnings a normal run would — but doesn't write anything, whether to
+`--out` or stdout:
+
+```
+$ ratelimit-convert limits.conf --validate-only
+limits.conf is valid: 1 rule (nginx -> json)
+```
+
+Combine with `--json` to get the same report object as a normal `--json`
+run, minus `output` and `wroteTo`. Useful in CI when you only care whether
+a config is convertible, not what it converts to.
 
 ## Building
 

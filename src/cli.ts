@@ -11,6 +11,7 @@ interface Args {
   to?: Format;
   out?: string;
   json: boolean;
+  validateOnly: boolean;
 }
 
 function requireFormat(value: string | undefined, flag: string): Format {
@@ -26,6 +27,7 @@ function parseArgs(argv: string[]): Args {
   let to: Format | undefined;
   let out: string | undefined;
   let json = false;
+  let validateOnly = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -33,6 +35,7 @@ function parseArgs(argv: string[]): Args {
     else if (arg === '--to') to = requireFormat(argv[++i], '--to');
     else if (arg === '--out') out = argv[++i];
     else if (arg === '--json') json = true;
+    else if (arg === '--validate-only') validateOnly = true;
     else if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
@@ -44,7 +47,7 @@ function parseArgs(argv: string[]): Args {
   }
 
   if (!input) throw new Error('missing input file argument');
-  return { input, from, to, out, json };
+  return { input, from, to, out, json, validateOnly };
 }
 
 function detectFormat(path: string): Format {
@@ -65,6 +68,7 @@ Options:
   --to <nginx|json>     target format (defaults to the other of the two)
   --out <file>          write the result to a file instead of stdout
   --json                emit a machine-readable JSON report instead of plain output
+  --validate-only       parse and convert but don't write the result anywhere
   -h, --help            show this message`);
 }
 
@@ -75,7 +79,23 @@ function main(): void {
 
   const text = readFileSync(args.input, 'utf8');
   const { rules, connLimits, warnings } = from === 'nginx' ? parseNginx(text) : parseCanonicalJson(text);
+  // Run the full pipeline, including generation, so --validate-only catches
+  // anything generation would choke on too, not just parse errors.
   const output = to === 'nginx' ? generateNginx(rules, connLimits) : generateCanonicalJson(rules, connLimits);
+
+  if (args.validateOnly) {
+    if (args.json) {
+      const report = { ok: true, from, to, ruleCount: rules.length, connLimitCount: connLimits.length, warnings };
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+      return;
+    }
+    for (const warning of warnings) {
+      process.stderr.write(`warning: ${warning}\n`);
+    }
+    const connSuffix = connLimits.length > 0 ? ` and ${connLimits.length} conn limit${connLimits.length === 1 ? '' : 's'}` : '';
+    process.stdout.write(`${args.input} is valid: ${rules.length} rule${rules.length === 1 ? '' : 's'}${connSuffix} (${from} -> ${to})\n`);
+    return;
+  }
 
   if (args.out) {
     writeFileSync(args.out, output, 'utf8');
