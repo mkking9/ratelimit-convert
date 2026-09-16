@@ -91,6 +91,23 @@ export function parseNginx(text: string): ConversionResult {
         continue;
       }
       rule.conn = conn;
+    } else if (directive === 'map' || directive === 'geo') {
+      // map/geo blocks define values for a variable that gets used as a
+      // limit key elsewhere (e.g. `map $remote_addr $limit_key { ... }`,
+      // then `limit_req_zone $limit_key zone=...`). We don't need to
+      // interpret the mapping itself - the key is already captured
+      // verbatim wherever it's referenced - just skip past the block body
+      // so its lines don't each get flagged as an unrecognized directive.
+      let depth = (stripped.match(/\{/g) || []).length - (stripped.match(/\}/g) || []).length;
+      while (depth > 0 && i + 1 < lines.length) {
+        i++;
+        const blockLine = lines[i].replace(/#.*$/, '');
+        depth += (blockLine.match(/\{/g) || []).length - (blockLine.match(/\}/g) || []).length;
+      }
+      if (depth > 0) {
+        warnings.push(`line ${i + 1}: unterminated ${directive} block, rest of file skipped`);
+        break;
+      }
     } else {
       warnings.push(`line ${i + 1}: unrecognized directive "${directive}", skipped`);
     }

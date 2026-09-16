@@ -31,6 +31,19 @@ limit_conn_zone $binary_remote_addr zone=addr:10m;
 limit_conn addr 10;
 ```
 
+The key doesn't have to be a builtin variable — `map` and `geo` blocks that
+define a custom key variable are recognized and skipped over (their body
+isn't representable in the JSON format, only the resulting variable name
+matters to a rule):
+
+```nginx
+map $remote_addr $limit_key {
+    default   $remote_addr;
+    10.0.0.0/8 "";
+}
+limit_req_zone $limit_key zone=api_general:10m rate=10r/s;
+```
+
 **json** — one object per zone, everything nginx splits across the
 `limit_req_zone` directive and its `limit_req` directives collapsed into
 one rule:
@@ -156,5 +169,6 @@ node dist/cli.js limits.conf --json
 ## Status
 
 Early. `limit_req`/`limit_req_zone` and `limit_conn`/`limit_conn_zone` are
-handled, including multiple `limit_req` lines against the same zone, but
-not `$geo`- or `map`-based keys yet. See the issues for what's next.
+handled, including multiple `limit_req` lines against the same zone and
+`geo`/`map`-defined key variables. No unit tests yet. See the issues for
+what's next.
